@@ -2,17 +2,25 @@
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Expense Tracker</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
     <!-- Bootstrap CSS -->
     <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
     <div class="container mt-5">
         <h1 class="text-center mb-4">Expense Tracker</h1>
+
+        <!-- Buttons to initiate auth sequence and sign out -->
+        <div class="text-center mb-3">
+            <button id="authorize_button" class="btn btn-primary" onclick="handleAuthClick()">Authorize</button>
+            <button id="signout_button" class="btn btn-secondary" onclick="handleSignoutClick()">Sign Out</button>
+        </div>
+
+        <!-- Form to add new expense -->
         <form id="expense-form" class="mb-4">
             <div class="form-group">
                 <label for="expense-item">Item</label>
@@ -23,27 +31,28 @@
                 <input type="number" class="form-control" id="expense-amount" placeholder="Enter amount" required>
             </div>
             <div class="form-group">
-                <label for="receipt-upload">Upload Receipt</label>
-                <input type="file" class="form-control-file" id="receipt-upload">
+                <label for="expense-receipt">Upload Receipt</label>
+                <input type="file" class="form-control-file" id="expense-receipt" accept="image/*" required>
             </div>
-            <button type="submit" class="btn btn-primary btn-block">Add Expense</button>
+            <button type="submit" class="btn btn-success btn-block">Add Expense</button>
         </form>
 
-        <h2 class="text-center mb-4">Expenses</h2>
+        <h2 class="text-center">Expense List</h2>
         <ul id="expense-list" class="list-group">
-            <!-- Example expense item -->
-            <!-- <li class="list-group-item d-flex justify-content-between align-items-center">
-                House Rent - $500
-                <span class="badge badge-success">Paid</span>
-            </li> -->
+            <!-- The fetched expense data will be displayed here -->
         </ul>
+        <div class="d-flex justify-content-between mt-3">
+            <button id="prev-button" class="btn btn-primary" disabled>Previous</button>
+            <span id="page-info" class="align-self-center">Page 1</span>
+            <button id="next-button" class="btn btn-primary" disabled>Next</button>
+        </div>
     </div>
 
-    <!-- Bootstrap JS, Popper.js, and jQuery -->
-    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.3/dist/umd/popper.min.js"></script>
-    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    <!-- Load Google API and Client Library -->
+    <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+    <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+    <!-- Reference to the separated JS file -->
     <script src="app.js"></script>
-</body>
 
-</html>
+    <!-- Bootstrap JS and Popper.js -->
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
