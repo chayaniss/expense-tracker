@@ -37,8 +37,6 @@ async function initializeGapiClient() {
     checkStoredToken();
 }
 
- 
-
 function gisLoaded() {
     tokenClient = google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
@@ -48,20 +46,7 @@ function gisLoaded() {
     gisInited = true;
     maybeEnableButtons();
 }
-
-function decodeJwtResponse(token) {
-    // Decode the JWT token to get the user information.
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(
-        atob(base64)
-            .split('')
-            .map((c) => `%${`00${c.charCodeAt(0).toString(16)}`.slice(-2)}`)
-            .join('')
-    );
-    return JSON.parse(jsonPayload);
-}
-
+ 
 function maybeEnableButtons() {
     if (gapiInited && gisInited) {
         document.getElementById('authorize_button').style.visibility = 'visible';
@@ -70,16 +55,32 @@ function maybeEnableButtons() {
 let idToken = '';
 
 function handleAuthClick() {
+    Swal.fire({
+        title: 'Authenticating',
+        text: 'Please wait...',
+        allowOutsideClick: false,
+        didOpen: () => {
+            Swal.showLoading();
+        }
+    });
     tokenClient.callback = async (resp) => {
         if (resp.error !== undefined) {
+            Swal.fire('Error', 'Authentication failed. Please try again.', 'error');
             throw (resp);
         }
+        
         // Store the token in localStorage
         localStorage.setItem('access_token', gapi.client.getToken().access_token);
         document.getElementById('signout_button').style.visibility = 'visible';
         document.getElementById('authorize_button').innerText = 'Refresh';
-        fetchUserEmailWithPeopleApi(); 
-        await fetchAndDisplayData(); // Fetch data after successful authorization
+        
+        try {
+            await fetchUserEmailWithPeopleApi();
+            await fetchAndDisplayData(); // Fetch data after successful authorization
+            Swal.close(); // Close the loading indicator
+        } catch (error) {
+            Swal.fire('Error', 'Failed to fetch data. Please try again.', 'error');
+        }
     };
 
     if (gapi.client.getToken() === null) {
@@ -90,7 +91,7 @@ function handleAuthClick() {
             gapi.client.setToken({ access_token: storedToken });
             document.getElementById('signout_button').style.visibility = 'visible';
             document.getElementById('authorize_button').innerText = 'Refresh';
-            fetchAndDisplayData();
+            fetchAndDisplayData().then(() => Swal.close()); // Close loading after fetching data
         } else {
             // Request a new token with user consent
             tokenClient.requestAccessToken({ prompt: 'consent' });
@@ -115,6 +116,7 @@ async function fetchUserEmailWithPeopleApi() {
         console.log('User email:', userEmail); 
     } catch (error) {
         console.error('Error fetching user email:', error);
+        Swal.fire('Error', 'Failed to fetch user email. Please try again.', 'error');
     }
 }
 
@@ -125,9 +127,20 @@ async function handleSignoutClick() {
         gapi.client.setToken('');
         localStorage.removeItem('access_token'); // Remove the token from localStorage
         localStorage.removeItem('userEmail');
-        // document.getElementById('content').innerText = '';
         document.getElementById('authorize_button').innerText = 'Authorize';
         document.getElementById('signout_button').style.visibility = 'hidden';
+        const expenseList = document.getElementById('expense-list');
+        expenseList.innerHTML = ''; // Clear the list before adding new items
+        const noDataItem = document.createElement('li');
+        noDataItem.className = 'list-group-item';
+        noDataItem.textContent = 'No expenses found.';
+        expenseList.appendChild(noDataItem);
+        currentPage = 1; 
+        totalPages = 0;
+        allRows = []; 
+        displayPage(currentPage);
+        updatePaginationButtons();
+        Swal.fire('Signed Out', 'You have been signed out successfully.', 'success'); 
     }
 }
 
@@ -138,30 +151,71 @@ function checkStoredToken() {
         gapi.client.setToken({ access_token: storedToken });
         document.getElementById('signout_button').style.visibility = 'visible';
         document.getElementById('authorize_button').innerText = 'Refresh';
-        fetchAndDisplayData(); // Fetch data if the token is valid
+        fetchAndDisplayData().then(() => Swal.close()); // Close loading after fetching data
     }
-}
-
+} 
  
 let currentPage = 1;
 const itemsPerPage = 5;
 let totalPages = 0;
-let allRows = [];
+let allRows = []; 
+ 
 
 async function fetchAndDisplayData() {
     try {
+        // Show loading indicator
+        Swal.fire({
+            title: 'Loading',
+            text: 'Fetching your expense data...',
+            allowOutsideClick: false,
+            didOpen: () => {
+                Swal.showLoading();
+            }
+        });
+
+        // Get the user's email from local storage and format it as a sheet name
+        const userEmail = localStorage.getItem('userEmail');
+        const sheetName = userEmail.replace(/[@.]/g, '_'); // Replace special characters to ensure valid sheet name
+
+        // Construct the range to use the specific sheet name
+        const range = `${sheetName}!A2:D`; // Adjust the range as needed
+
+        // Fetch data from the specified sheet
         const response = await gapi.client.sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID,
-            range: 'Sheet1!A2:D', // Adjust the range to where your data starts
+            range: range,
         });
-        
+
+        // Process and sort the data
         allRows = response.result.values || [];
+        allRows.sort((a, b) => {
+            const dateA = new Date(a[0]); // Parse date from the first column
+            const dateB = new Date(b[0]);
+            return dateB - dateA; // Sort in descending order (latest first)
+        });
+
+        // Calculate the total number of pages
         totalPages = Math.ceil(allRows.length / itemsPerPage);
         currentPage = 1; // Reset to the first page whenever data is fetched
+
+        // Update pagination buttons and display the first page
         updatePaginationButtons();
         displayPage(currentPage);
+
+        // Close the loading indicator
+        Swal.close();
     } catch (error) {
         console.error('Error fetching data from Google Sheets:', error);
+
+        // Close the loading indicator in case of error
+        Swal.close();
+
+        // Handle the case where the specified sheet does not exist
+        if (error.status === 404) {
+            Swal.fire('Error', 'The specified sheet does not exist. Please ensure the sheet name is correct.', 'error');
+        } else {
+            Swal.fire('Error', 'Failed to fetch data. Please try again.', 'error');
+        }
     }
 }
 
@@ -176,14 +230,39 @@ function displayPage(page) {
     if (rows.length > 0) {
         rows.forEach((row) => {
             const listItem = document.createElement('li');
-            listItem.className = 'list-group-item';
-
+            listItem.className = 'list-group-item'; 
+            const fileIdMatch = row[3].match(/(?:id=|\/d\/|\/file\/d\/)([a-zA-Z0-9-_]+)/);
+            const fileId = fileIdMatch ? fileIdMatch[1] : null;
+            
+            // Create an anchor element to wrap the image
+            const link = document.createElement('a');
+            if (fileId) {
+                // Use the Google Drive view link format
+                link.href = `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
+                link.target = '_blank'; // Opens the link in a new tab
+            } else {
+                link.href = '#'; // Fallback in case the fileId is not available
+            }
+            
             // Create an image element for the receipt preview
             const img = document.createElement('img');
-            img.src = row[3]; // The URL of the uploaded receipt image
+            if (fileId) {
+                // Use the Google Drive thumbnail link format
+                img.src = `https://drive.google.com/thumbnail?id=${fileId}`;
+            } else {
+                // Fallback if no valid ID is found
+                img.src = 'https://via.placeholder.com/150?text=No+Image';
+            }
+            
             img.alt = 'Receipt Image';
             img.style.maxWidth = '150px'; // Set a maximum width for the image preview
             img.style.marginRight = '10px'; // Add some spacing
+            
+            // Append the image to the link
+            link.appendChild(img);
+            
+            // Append the link to the list item
+            listItem.appendChild(link);
 
             // Create content for the item and amount details
             const content = document.createElement('div');
@@ -192,7 +271,7 @@ function displayPage(page) {
                                  <strong>Date:</strong> ${row[0]}`;
 
             // Append the image and content to the list item
-            listItem.appendChild(img);
+         
             listItem.appendChild(content);
 
             // Add the list item to the expense list
@@ -245,21 +324,48 @@ async function uploadFileToDrive(file) {
 
     const accessToken = gapi.client.getToken().access_token;
 
-    // Upload the file to Google Drive
-    const uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-        method: 'POST',
-        headers: new Headers({ 'Authorization': 'Bearer ' + accessToken }),
-        body: form,
-    });
+    try {
+        // Show loading indicator
+        Swal.fire({
+            title: 'Uploading',
+            text: 'Please wait while the receipt is being uploaded...',
+            allowOutsideClick: false,
+            didOpen: () => {
+                Swal.showLoading();
+            }
+        });
 
-    const data = await uploadResponse.json();
-    const fileId = data.id;
+        // Upload the file to Google Drive
+        const uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+            method: 'POST',
+            headers: new Headers({ 'Authorization': 'Bearer ' + accessToken }),
+            body: form,
+        });
 
-    // Set the file to be accessible by anyone with the link
-    await setFilePermissions(fileId, accessToken);
+        const data = await uploadResponse.json();
+        const fileId = data.id;
 
-    // Return the shareable link
-    return `https://drive.google.com/uc?id=${fileId}`;
+        // Set the file to be accessible by anyone with the link
+        await setFilePermissions(fileId, accessToken);
+
+        // Close the loading indicator
+        Swal.close();
+
+        // Return the shareable link
+        // return `https://drive.google.com/uc?id=${fileId}`;
+        // return `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
+        // return `https://drive.google.com/uc?export=view&id=${fileId}`;
+        console.log('Generated fileId:', fileId);
+        return `https://drive.google.com/uc?export=view&id=${fileId}`;
+    } catch (error) {
+        console.error('Error uploading file:', error);
+
+        // Close the loading indicator if there's an error
+        Swal.close();
+
+        // Show an error message
+        Swal.fire('Error', 'Failed to upload the receipt. Please try again.', 'error');
+    }
 }
 
 // Function to set the file permissions
@@ -290,37 +396,33 @@ async function setFilePermissions(fileId, accessToken) {
     }
 }
 
-
-
-
-// Function to add an expense to Google Sheets
-async function addExpenseToSheet(item, amount, receiptUrl) {
- 
-    const userEmail =   localStorage.getItem('userEmail'); 
-    const values = [
-        [new Date().toLocaleString(), item, amount, receiptUrl, userEmail]
-    ];
-
-    const body = {
-        values: values
+// Function to set the file permissions
+async function setFilePermissions(fileId, accessToken) {
+    const permissions = {
+        'role': 'reader', // 'reader' means view-only access
+        'type': 'anyone'  // 'anyone' allows anyone with the link to access
     };
 
     try {
-        const response = await gapi.client.sheets.spreadsheets.values.append({
-            spreadsheetId: SPREADSHEET_ID,
-            range: 'Sheet1!A1:E1', // Adjust the range to include the new User ID column
-            valueInputOption: 'RAW',
-            resource: body,
+        const permissionResponse = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(permissions)
         });
-        console.log('Expense added to sheet:', response);
-        alert('Expense added successfully!');
-        await fetchAndDisplayData(); // Fetch updated data after adding an expense
-    } catch (error) {
-        console.error('Error adding expense:', error);
-        document.getElementById('content').innerText = error.message;
-    }
-}
 
+        if (permissionResponse.ok) {
+            console.log('File permissions updated successfully.');
+        } else {
+            const errorData = await permissionResponse.json();
+            console.error('Error setting file permissions:', errorData);
+        }
+    } catch (error) {
+        console.error('Error setting file permissions:', error);
+    }
+}   
 
 // Add event listener for form submission
 document.getElementById('expense-form').addEventListener('submit', async function (event) {
@@ -346,3 +448,88 @@ document.getElementById('expense-form').addEventListener('submit', async functio
         alert('Failed to upload receipt or save expense.');
     }
 });
+
+async function addExpenseToSheet(item, amount, receiptUrl) {
+    const userEmail = localStorage.getItem('userEmail'); 
+    const sheetName = userEmail.replace(/[@.]/g, '_'); // Replace special characters to ensure valid sheet name
+    const values = [
+        [new Date().toLocaleString(), item, amount, receiptUrl, userEmail]
+    ];
+    const body = { values: values };
+
+    try {
+        // Show loading indicator before any actions
+        Swal.fire({
+            title: 'Processing',
+            text: 'Saving your expense and fetching data...',
+            allowOutsideClick: false,
+            didOpen: () => {
+                Swal.showLoading();
+            }
+        });
+
+        // Check if the sheet for this user exists, create if not
+        await ensureSheetExists(sheetName);
+
+        // Append the data to the user's specific sheet
+        const response = await gapi.client.sheets.spreadsheets.values.append({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${sheetName}!A1:E1`, // Adjust the range to include the new User ID column
+            valueInputOption: 'RAW',
+            resource: body,
+        });
+
+        console.log('Expense added to sheet:', response); 
+
+        // Fetch updated data after adding an expense
+        await fetchAndDisplayData();
+        
+        // Close the loading indicator after all operations complete
+        Swal.close();
+    } catch (error) {
+        console.error('Error adding expense:', error);
+
+        // Close the loading indicator in case of error
+        Swal.close();
+
+        // Show error message to the user
+        Swal.fire('Error', 'Failed to save expense or fetch data. Please try again.', 'error');
+    }
+}
+
+
+// Function to ensure a sheet exists for the user
+async function ensureSheetExists(sheetName) {
+    try {
+        // Get the spreadsheet details
+        const spreadsheet = await gapi.client.sheets.spreadsheets.get({
+            spreadsheetId: SPREADSHEET_ID,
+        });
+
+        // Check if the sheet already exists
+        const sheetExists = spreadsheet.result.sheets.some(
+            (sheet) => sheet.properties.title === sheetName
+        );
+
+        if (!sheetExists) {
+            // Create a new sheet for the user
+            await gapi.client.sheets.spreadsheets.batchUpdate({
+                spreadsheetId: SPREADSHEET_ID,
+                resource: {
+                    requests: [
+                        {
+                            addSheet: {
+                                properties: {
+                                    title: sheetName,
+                                },
+                            },
+                        },
+                    ],
+                },
+            });
+            console.log(`Sheet "${sheetName}" created.`);
+        }
+    } catch (error) {
+        console.error('Error ensuring sheet exists:', error);
+    }
+}
